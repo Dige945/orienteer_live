@@ -248,7 +248,7 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     setBusy(false)
                     if (result == null) {
-                        setStatus("加入失败，请检查赛事码和网络。", false, "失败")
+                        setStatus(JoinApi.lastError.ifBlank { "加入失败，请检查赛事码和网络。" }, false, "失败")
                         return@runOnUiThread
                     }
                     val intent = Intent(this, TrackingService::class.java).apply {
@@ -298,7 +298,7 @@ class MainActivity : ComponentActivity() {
                 if (eventInfo == null) {
                     connectedEvent = null
                     eventNameText.text = "未选择赛事"
-                    setStatus("连接失败，请检查服务器地址、赛事码和网络。", false, "失败")
+                    setStatus(JoinApi.lastError.ifBlank { "连接失败，请检查服务器地址、赛事码和网络。" }, false, "失败")
                     return@runOnUiThread
                 }
                 connectedEvent = eventInfo

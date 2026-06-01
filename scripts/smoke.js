@@ -214,6 +214,26 @@ async function main() {
     const track = await json(`/api/events/${replaced.event.id}/runners/${joined.runner.id}/track`);
     assert.strictEqual(track.track.length, 2);
 
+    await json("/api/location/report", {
+      method: "POST",
+      body: JSON.stringify({
+        eventId: replaced.event.id,
+        runnerId: joined.runner.id,
+        uploadToken: joined.runner.uploadToken,
+        lat: 31.2,
+        lng: 121.2,
+        coordSystem: "WGS84",
+        accuracy: 80,
+        speed: 0,
+        heading: 0,
+        timestamp: Date.now() + 2
+      })
+    });
+
+    const liveAfterJump = await json(`/api/events/${replaced.event.id}/live`);
+    assert.strictEqual(liveAfterJump.liveStates[0].latestLat, live.liveStates[0].latestLat);
+    assert.strictEqual(liveAfterJump.liveStates[0].rejectedCount, 1);
+
     await adminJson(`/api/events/${replaced.event.id}`, { method: "DELETE" });
     const eventsAfterDelete = await json("/api/events");
     assert.strictEqual(eventsAfterDelete.events.length, 0);

@@ -11,6 +11,8 @@ const state = {
   adminPassword: localStorage.getItem("adminPassword") || "",
   playback: {
     runnerId: "",
+    selectedRunnerIds: new Set(),
+    speed: 1,
     index: 0,
     playing: false,
     timer: null
@@ -29,6 +31,12 @@ const state = {
     imagePoints: []
   },
   ws: null,
+  liveView: {
+    scale: 1,
+    x: 0,
+    y: 0,
+    drag: null
+  },
   tileMap: {
     centerLng: 120.123456,
     centerLat: 30.123456,
@@ -41,6 +49,7 @@ const state = {
 
 const $ = selector => document.querySelector(selector);
 const LIVE_TRAIL_MS = 20 * 1000;
+const RUNNER_COLORS = ["#d97706", "#0f766e", "#2563eb", "#be123c", "#7c3aed", "#15803d", "#b45309", "#0891b2", "#c2410c", "#4f46e5"];
 const A = 6378245.0;
 const EE = 0.00669342162296594323;
 
@@ -240,6 +249,14 @@ function visibleRunnerIds() {
   return new Set(visibleRunners().map(runner => runner.id));
 }
 
+function colorForRunner(runnerId) {
+  let hash = 0;
+  for (const char of String(runnerId || "")) {
+    hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
+  }
+  return RUNNER_COLORS[Math.abs(hash) % RUNNER_COLORS.length];
+}
+
 function renderApiExample() {
   const event = selectedEvent();
   const serverOrigin = $("#serverOrigin");
@@ -308,6 +325,12 @@ function renderApiExample() {
       }
     }
   }, null, 2);
+}
+
+function defaultServerOrigin() {
+  const saved = localStorage.getItem("appServerUrl") || "";
+  const isOldTemporaryUrl = /trycloudflare\.com|localhost|127\.0\.0\.1|192\.168\.|10\./i.test(saved);
+  return saved && !isOldTemporaryUrl ? saved : location.origin;
 }
 
 function applyTransform() {
@@ -873,6 +896,7 @@ function worldToLngLat(x, y, zoom) {
 }
 
 function trackPointFor(point) {
+  if (point?.rejected) return null;
   return livePointFor({
     latestLat: point.displayLat ?? point.lat,
     latestLng: point.displayLng ?? point.lng
@@ -881,7 +905,7 @@ function trackPointFor(point) {
 
 function recentTrailPoints(points) {
   const cutoff = Date.now() - LIVE_TRAIL_MS;
-  return points.filter(point => Number(point.timestamp || 0) >= cutoff);
+  return points.filter(point => !point.rejected && Number(point.timestamp || 0) >= cutoff);
 }
 
 function renderLiveOverlay() {
@@ -897,10 +921,11 @@ function renderLiveOverlay() {
       if (!visibleIds.has(runnerId)) return;
       const pathPoints = recentTrailPoints(points).map(trackPointFor).filter(Boolean);
       if (pathPoints.length < 2) return;
+      const color = colorForRunner(runnerId);
       const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
       polyline.setAttribute("points", pathPoints.map(point => `${point.x},${point.y}`).join(" "));
       polyline.setAttribute("fill", "none");
-      polyline.setAttribute("stroke", "#0f766e");
+      polyline.setAttribute("stroke", color);
       polyline.setAttribute("stroke-width", "3");
       polyline.setAttribute("stroke-linejoin", "round");
       polyline.setAttribute("stroke-linecap", "round");
@@ -909,6 +934,8 @@ function renderLiveOverlay() {
     });
   }
 
+  renderPlaybackPaths(svg, runnerById);
+
   state.liveStates.forEach(live => {
     const runner = runnerById.get(live.runnerId);
     if (!visibleIds.has(live.runnerId)) return;
@@ -916,13 +943,15 @@ function renderLiveOverlay() {
     const point = rawPoint ? clampLivePoint(rawPoint) : null;
     const item = document.createElement("div");
     item.className = `live-item ${live.isOnline ? "" : "offline"}`;
-    item.innerHTML = `<strong><span class="status-dot ${live.isOnline ? "" : "offline"}"></span>${escapeHtml(runner?.name || live.runnerId)}</strong><small>${live.isOnline ? "在线" : "离线"} · ${point?.offMap ? "图外 · " : ""}${live.staleSeconds || 0} 秒前 · 精度 ${live.accuracy || 0}m · ${new Date(live.lastSeenAt).toLocaleTimeString()}</small>`;
+    const rejectedText = live.rejectedCount ? ` · 已过滤跳点 ${live.rejectedCount} 次` : "";
+    item.innerHTML = `<strong><span class="status-dot ${live.isOnline ? "" : "offline"}"></span>${escapeHtml(runner?.name || live.runnerId)}</strong><small>${live.isOnline ? "在线" : "离线"} · ${point?.offMap ? "图外 · " : ""}${live.staleSeconds || 0} 秒前 · 精度 ${live.accuracy || 0}m${rejectedText} · ${new Date(live.lastSeenAt).toLocaleTimeString()}</small>`;
     list.appendChild(item);
     if (!point) return;
 
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const color = point.offMap ? "#b91c1c" : live.isOnline ? colorForRunner(live.runnerId) : "#b91c1c";
     group.innerHTML = `
-      <circle cx="${point.x}" cy="${point.y}" r="${point.offMap ? 6 : 5}" fill="${point.offMap ? "#b91c1c" : live.isOnline ? "#d97706" : "#b91c1c"}" stroke="#ffffff" stroke-width="2"></circle>
+      <circle cx="${point.x}" cy="${point.y}" r="${point.offMap ? 6 : 5}" fill="${color}" stroke="#ffffff" stroke-width="2"></circle>
       <text x="${point.x + 9}" y="${point.y + 4}" fill="${point.offMap ? "#b91c1c" : "#18201a"}" font-size="12" font-weight="700">${escapeHtml(runner?.name || live.runnerId)}${point.offMap ? "（图外）" : ""}</text>
     `;
     svg.appendChild(group);
@@ -932,45 +961,105 @@ function renderLiveOverlay() {
   $("#liveEmpty").style.display = state.liveStates.length && state.mapImage ? "none" : "grid";
 }
 
+function renderPlaybackPaths(svg, runnerById) {
+  if (!state.playback.runnerId) return;
+  playbackSelectedRunnerIds().forEach(runnerId => {
+    if (!runnerById.has(runnerId)) return;
+    const points = playbackValidPoints(runnerId).slice(0, state.playback.index + 1);
+    const pathPoints = points.map(trackPointFor).filter(Boolean);
+    if (pathPoints.length < 2) return;
+    const color = colorForRunner(runnerId);
+    const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polyline.setAttribute("points", pathPoints.map(point => `${point.x},${point.y}`).join(" "));
+    polyline.setAttribute("fill", "none");
+    polyline.setAttribute("stroke", color);
+    polyline.setAttribute("stroke-width", "3");
+    polyline.setAttribute("stroke-linejoin", "round");
+    polyline.setAttribute("stroke-linecap", "round");
+    polyline.setAttribute("opacity", "0.9");
+    svg.appendChild(polyline);
+  });
+}
+
 function renderPlaybackMarker(svg, runnerById) {
-  const runnerId = state.playback.runnerId;
-  const points = state.tracks[runnerId] || [];
-  if (!runnerId || !points.length) return;
-  const index = Math.min(state.playback.index, points.length - 1);
-  const point = trackPointFor(points[index]);
-  if (!point) return;
-  const runner = runnerById.get(runnerId);
-  const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  group.innerHTML = `
-    <circle cx="${point.x}" cy="${point.y}" r="13" fill="#ffffff" stroke="#b91c1c" stroke-width="4"></circle>
-    <circle cx="${point.x}" cy="${point.y}" r="5" fill="#b91c1c"></circle>
-    <text x="${point.x + 16}" y="${point.y - 12}" fill="#b91c1c" font-size="13" font-weight="800">${escapeHtml(runner?.name || "回放")}</text>
-  `;
-  svg.appendChild(group);
+  const selectedIds = playbackSelectedRunnerIds();
+  selectedIds.forEach(runnerId => {
+    const points = playbackValidPoints(runnerId);
+    if (!points.length) return;
+    const index = Math.min(state.playback.index, points.length - 1);
+    const point = trackPointFor(points[index]);
+    if (!point) return;
+    const runner = runnerById.get(runnerId);
+    const color = colorForRunner(runnerId);
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.innerHTML = `
+      <circle cx="${point.x}" cy="${point.y}" r="5" fill="${color}" stroke="#ffffff" stroke-width="2"></circle>
+      <text x="${point.x + 9}" y="${point.y + 4}" fill="#18201a" font-size="12" font-weight="700">${escapeHtml(runner?.name || runnerId)}</text>
+    `;
+    svg.appendChild(group);
+  });
 }
 
 function renderPlaybackOptions() {
   const select = $("#playbackRunner");
+  const checks = $("#playbackRunnerChecks");
   if (!select) return;
   const current = state.playback.runnerId;
   select.innerHTML = `<option value="">选择参赛者</option>`;
+  if (checks) checks.innerHTML = "";
   state.runners.forEach(runner => {
     const option = document.createElement("option");
     option.value = runner.id;
     option.textContent = runner.name;
     select.appendChild(option);
+
+    const checked = state.playback.selectedRunnerIds.size
+      ? state.playback.selectedRunnerIds.has(runner.id)
+      : runner.id === current;
+    const label = document.createElement("label");
+    label.innerHTML = `
+      <input type="checkbox" value="${escapeHtml(runner.id)}" ${checked ? "checked" : ""}>
+      <span class="runner-swatch" style="background:${colorForRunner(runner.id)}"></span>
+      <span>${escapeHtml(runner.name)}</span>
+    `;
+    label.querySelector("input").addEventListener("change", event => {
+      if (event.target.checked) {
+        state.playback.selectedRunnerIds.add(runner.id);
+      } else {
+        state.playback.selectedRunnerIds.delete(runner.id);
+      }
+      renderPlaybackControls();
+      renderLiveOverlay();
+    });
+    checks?.appendChild(label);
   });
   if (current && state.runners.some(runner => runner.id === current)) {
     select.value = current;
   }
+  if (!state.playback.runnerId && state.runners[0]) {
+    state.playback.runnerId = state.runners[0].id;
+    select.value = state.playback.runnerId;
+  }
+  if (!state.playback.selectedRunnerIds.size && state.playback.runnerId) {
+    state.playback.selectedRunnerIds.add(state.playback.runnerId);
+  }
   renderPlaybackControls();
+}
+
+function playbackValidPoints(runnerId) {
+  return (state.tracks[runnerId] || []).filter(point => !point.rejected);
+}
+
+function playbackSelectedRunnerIds() {
+  const selected = Array.from(state.playback.selectedRunnerIds).filter(id => state.runners.some(runner => runner.id === id));
+  return selected.length ? selected : (state.playback.runnerId ? [state.playback.runnerId] : []);
 }
 
 function renderPlaybackControls() {
   const range = $("#playbackRange");
   const label = $("#playbackTime");
   if (!range || !label) return;
-  const points = state.tracks[state.playback.runnerId] || [];
+  const points = playbackValidPoints(state.playback.runnerId);
   range.max = String(Math.max(0, points.length - 1));
   range.value = String(Math.min(state.playback.index, Math.max(0, points.length - 1)));
   if (!points.length) {
@@ -1009,7 +1098,7 @@ function stopPlayback() {
 }
 
 function startPlayback() {
-  const points = state.tracks[state.playback.runnerId] || [];
+  const points = playbackValidPoints(state.playback.runnerId);
   if (points.length < 2) return;
   state.playback.playing = true;
   $("#playPause").textContent = "暂停";
@@ -1022,7 +1111,7 @@ function startPlayback() {
     state.playback.index = current;
     renderPlaybackControls();
     renderLiveOverlay();
-  }, 700);
+  }, Math.max(80, 700 / state.playback.speed));
 }
 
 async function refreshEvents() {
@@ -1084,6 +1173,9 @@ function connectWs() {
         state.tracks[message.point.runnerId] = state.tracks[message.point.runnerId] || [];
         state.tracks[message.point.runnerId].push(message.point);
         renderPlaybackControls();
+        if (!state.runners.some(runner => runner.id === message.point.runnerId)) {
+          refreshRunners();
+        }
       }
       renderAlignOverlay();
       renderLiveOverlay();
@@ -1099,7 +1191,11 @@ function connectWs() {
       renderLiveOverlay();
     }
     if (message.type === "runner-updated") {
-      state.runners = state.runners.map(runner => runner.id === message.runner.id ? message.runner : runner);
+      if (state.runners.some(runner => runner.id === message.runner.id)) {
+        state.runners = state.runners.map(runner => runner.id === message.runner.id ? message.runner : runner);
+      } else {
+        state.runners.push(message.runner);
+      }
       renderRunners();
       renderLiveOverlay();
     }
@@ -1120,6 +1216,15 @@ function connectWs() {
       refreshEvents();
     }
   };
+}
+
+async function refreshRunners() {
+  if (!state.selectedEventId) return;
+  const data = await api(`/api/events/${state.selectedEventId}/runners`);
+  state.runners = data.runners;
+  renderRunners();
+  renderPlaybackOptions();
+  renderLiveOverlay();
 }
 
 function fileToPayload(file) {
@@ -1154,6 +1259,35 @@ function stepRangeInput(inputId, direction) {
   const next = Math.max(min, Math.min(max, current + direction * step));
   input.value = String(Number(next.toFixed(4)));
   input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function applyLiveViewTransform() {
+  const viewport = $("#liveViewport");
+  if (!viewport) return;
+  viewport.style.transform = `translate(${state.liveView.x}px, ${state.liveView.y}px) scale(${state.liveView.scale})`;
+  const label = $("#liveZoomLabel");
+  if (label) label.textContent = `${Math.round(state.liveView.scale * 100)}%`;
+}
+
+function setLiveZoom(nextScale, originX, originY) {
+  const oldScale = state.liveView.scale;
+  const scale = Math.max(0.5, Math.min(5, nextScale));
+  const stage = $("#liveStage").getBoundingClientRect();
+  const x = originX ?? stage.width / 2;
+  const y = originY ?? stage.height / 2;
+  const worldX = (x - state.liveView.x) / oldScale;
+  const worldY = (y - state.liveView.y) / oldScale;
+  state.liveView.scale = scale;
+  state.liveView.x = x - worldX * scale;
+  state.liveView.y = y - worldY * scale;
+  applyLiveViewTransform();
+}
+
+function resetLiveView() {
+  state.liveView.scale = 1;
+  state.liveView.x = 0;
+  state.liveView.y = 0;
+  applyLiveViewTransform();
 }
 
 function setCalibrationMode(mode) {
@@ -1201,31 +1335,43 @@ async function addTestPointAtMapCenter() {
 function bindEvents() {
   $("#eventForm").addEventListener("submit", async event => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const data = await api("/api/events", {
-      method: "POST",
-      body: JSON.stringify({
-        name: form.get("name"),
-        description: form.get("description")
-      })
-    });
-    event.currentTarget.reset();
-    state.events.unshift(data.event);
-    await selectEvent(data.event.id);
+    const formEl = event.currentTarget;
+    try {
+      const form = new FormData(formEl);
+      const data = await api("/api/events", {
+        method: "POST",
+        body: JSON.stringify({
+          name: form.get("name"),
+          description: form.get("description")
+        })
+      });
+      formEl.reset();
+      state.events = [data.event];
+      await selectEvent(data.event.id);
+    } catch (error) {
+      console.error(error);
+      alert(`创建赛事失败：${error.message || "请检查管理员登录和网络"}`);
+    }
   });
 
   $("#runnerForm").addEventListener("submit", async event => {
     event.preventDefault();
     if (!state.selectedEventId) return alert("请先选择赛事");
-    const form = new FormData(event.currentTarget);
-    await api(`/api/events/${state.selectedEventId}/runners`, {
-      method: "POST",
-      body: JSON.stringify({
-        name: form.get("name")
-      })
-    });
-    event.currentTarget.reset();
-    await selectEvent(state.selectedEventId);
+    const formEl = event.currentTarget;
+    try {
+      const form = new FormData(formEl);
+      await api(`/api/events/${state.selectedEventId}/runners`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: form.get("name")
+        })
+      });
+      formEl.reset();
+      await selectEvent(state.selectedEventId);
+    } catch (error) {
+      console.error(error);
+      alert(`添加参赛者失败：${error.message || "请检查管理员登录和网络"}`);
+    }
   });
 
   $("#showTracks").addEventListener("change", event => {
@@ -1238,9 +1384,19 @@ function bindEvents() {
   $("#playbackRunner").addEventListener("change", event => {
     stopPlayback();
     state.playback.runnerId = event.target.value;
+    if (state.playback.runnerId) state.playback.selectedRunnerIds.add(state.playback.runnerId);
     state.playback.index = 0;
+    renderPlaybackOptions();
     renderPlaybackControls();
     renderLiveOverlay();
+  });
+
+  $("#playbackSpeed").addEventListener("change", event => {
+    state.playback.speed = Number(event.target.value || 1);
+    if (state.playback.playing) {
+      stopPlayback();
+      startPlayback();
+    }
   });
 
   $("#playbackRange").addEventListener("input", event => {
@@ -1287,6 +1443,41 @@ function bindEvents() {
         timestamp: Date.now()
       })
     });
+  });
+
+  $("#liveZoomIn").addEventListener("click", () => setLiveZoom(state.liveView.scale * 1.2));
+  $("#liveZoomOut").addEventListener("click", () => setLiveZoom(state.liveView.scale / 1.2));
+  $("#liveZoomReset").addEventListener("click", resetLiveView);
+
+  $("#liveStage").addEventListener("wheel", event => {
+    event.preventDefault();
+    const rect = $("#liveStage").getBoundingClientRect();
+    const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+    setLiveZoom(state.liveView.scale * factor, event.clientX - rect.left, event.clientY - rect.top);
+  }, { passive: false });
+
+  $("#liveStage").addEventListener("pointerdown", event => {
+    if (event.button !== 0 && event.pointerType === "mouse") return;
+    $("#liveStage").setPointerCapture(event.pointerId);
+    state.liveView.drag = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      startX: state.liveView.x,
+      startY: state.liveView.y
+    };
+  });
+
+  $("#liveStage").addEventListener("pointermove", event => {
+    const drag = state.liveView.drag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    state.liveView.x = drag.startX + event.clientX - drag.x;
+    state.liveView.y = drag.startY + event.clientY - drag.y;
+    applyLiveViewTransform();
+  });
+
+  $("#liveStage").addEventListener("pointerup", event => {
+    if (state.liveView.drag?.pointerId === event.pointerId) state.liveView.drag = null;
   });
 
   $("#mapFile").addEventListener("change", async event => {
@@ -1458,7 +1649,7 @@ function bindEvents() {
 
 async function boot() {
   bindEvents();
-  $("#serverOrigin").value = localStorage.getItem("appServerUrl") || location.origin;
+  $("#serverOrigin").value = defaultServerOrigin();
   if (state.adminPassword) {
     try {
       await api("/api/admin/login", {

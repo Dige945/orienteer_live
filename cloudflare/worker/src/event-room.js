@@ -6,6 +6,10 @@ const defaultState = {
   liveStates: {}
 };
 
+const MAX_REASONABLE_SPEED_MPS = 12;
+const MAX_REASONABLE_JUMP_METERS = 80;
+const MIN_JUMP_SECONDS = 1;
+
 const json = (payload, status = 200) => new Response(JSON.stringify(payload), {
   status,
   headers: {
@@ -28,6 +32,18 @@ function eventCode() {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function distanceMeters(aLat, aLng, bLat, bLng) {
+  const radius = 6371000;
+  const toRad = degrees => degrees * Math.PI / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const lat1 = toRad(aLat);
+  const lat2 = toRad(bLat);
+  const h = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * radius * Math.asin(Math.sqrt(h));
 }
 
 function extensionForMime(mimeType) {
@@ -115,7 +131,7 @@ export class EventRoom {
       .filter(state => state.eventId === eventId)
       .map(state => ({
         ...state,
-        isOnline: now - Number(state.lastSeenAt || 0) <= 30 * 1000,
+        isOnline: now - Number(state.lastSeenAt || 0) <= 90 * 1000,
         staleSeconds: Math.max(0, Math.round((now - Number(state.lastSeenAt || 0)) / 1000))
       }));
   }
@@ -160,21 +176,61 @@ export class EventRoom {
   }
 
   appendPoint(point) {
+    const receivedAt = Date.now();
+    const previousLive = this.store.liveStates[point.runnerId];
+    const decision = this.classifyPoint(point, previousLive);
+    point.receivedAt = receivedAt;
+    point.rejected = !decision.accepted;
+    point.rejectReason = decision.reason || "";
+    point.jumpDistance = decision.distance ? Number(decision.distance.toFixed(1)) : 0;
+    point.impliedSpeed = decision.impliedSpeed ? Number(decision.impliedSpeed.toFixed(2)) : 0;
     this.store.locationPoints.push(point);
     this.store.locationPoints = this.store.locationPoints.slice(-5000);
+    if (decision.accepted || !previousLive) {
+      this.store.liveStates[point.runnerId] = {
+        runnerId: point.runnerId,
+        eventId: point.eventId,
+        latestLat: point.displayLat,
+        latestLng: point.displayLng,
+        rawLat: point.lat,
+        rawLng: point.lng,
+        accuracy: point.accuracy,
+        speed: point.speed,
+        heading: point.heading,
+        lastSeenAt: receivedAt,
+        lastAcceptedAt: receivedAt,
+        isOnline: true,
+        rejectedCount: 0,
+        lastRejectedReason: ""
+      };
+      return;
+    }
     this.store.liveStates[point.runnerId] = {
-      runnerId: point.runnerId,
-      eventId: point.eventId,
-      latestLat: point.displayLat,
-      latestLng: point.displayLng,
-      rawLat: point.lat,
-      rawLng: point.lng,
-      accuracy: point.accuracy,
-      speed: point.speed,
-      heading: point.heading,
-      lastSeenAt: point.timestamp,
-      isOnline: true
+      ...previousLive,
+      lastSeenAt: receivedAt,
+      isOnline: true,
+      rejectedCount: Number(previousLive.rejectedCount || 0) + 1,
+      lastRejectedReason: point.rejectReason
     };
+  }
+
+  classifyPoint(point, previousLive) {
+    if (!previousLive?.lastAcceptedAt) return { accepted: true };
+    const distance = distanceMeters(previousLive.latestLat, previousLive.latestLng, point.displayLat, point.displayLng);
+    const seconds = Math.max(MIN_JUMP_SECONDS, (Date.now() - Number(previousLive.lastAcceptedAt || 0)) / 1000);
+    const impliedSpeed = distance / seconds;
+    const accuracy = Number(point.accuracy || 0);
+    const badAccuracy = accuracy >= 50;
+    const tooFast = distance >= MAX_REASONABLE_JUMP_METERS && impliedSpeed > MAX_REASONABLE_SPEED_MPS;
+    if (tooFast || (badAccuracy && distance >= MAX_REASONABLE_JUMP_METERS)) {
+      return {
+        accepted: false,
+        reason: tooFast ? "jump-speed" : "low-accuracy-jump",
+        distance,
+        impliedSpeed
+      };
+    }
+    return { accepted: true, distance, impliedSpeed };
   }
 
   async fetch(request) {
@@ -357,7 +413,7 @@ export class EventRoom {
         runner.updatedAt = nowIso();
       }
       await this.save();
-      this.broadcast({ type: "runner-updated", runner });
+      this.broadcast({ type: "runner-updated", runner: publicRunner(runner) });
       return json({ event, runner });
     }
 

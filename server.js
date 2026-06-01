@@ -11,7 +11,10 @@ const PUBLIC_DIR = path.join(ROOT, "public");
 const DATA_DIR = path.join(ROOT, "data");
 const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads", "maps");
 const STORE_PATH = path.join(DATA_DIR, "store.json");
-const OFFLINE_AFTER_MS = 30 * 1000;
+const OFFLINE_AFTER_MS = 90 * 1000;
+const MAX_REASONABLE_SPEED_MPS = 12;
+const MAX_REASONABLE_JUMP_METERS = 80;
+const MIN_JUMP_SECONDS = 1;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 
 for (const dir of [DATA_DIR, UPLOAD_DIR]) {
@@ -188,6 +191,79 @@ function normalizeLocation(point) {
     timestamp: Number(point.timestamp || Date.now()),
     createdAt: nowIso()
   };
+}
+
+function distanceMeters(aLat, aLng, bLat, bLng) {
+  const radius = 6371000;
+  const toRad = degrees => degrees * Math.PI / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const lat1 = toRad(aLat);
+  const lat2 = toRad(bLat);
+  const h = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * radius * Math.asin(Math.sqrt(h));
+}
+
+function classifyPoint(point, previousLive) {
+  if (!previousLive?.lastAcceptedAt) return { accepted: true };
+  const distance = distanceMeters(previousLive.latestLat, previousLive.latestLng, point.displayLat, point.displayLng);
+  const seconds = Math.max(MIN_JUMP_SECONDS, (Date.now() - Number(previousLive.lastAcceptedAt || 0)) / 1000);
+  const impliedSpeed = distance / seconds;
+  const accuracy = Number(point.accuracy || 0);
+  const badAccuracy = accuracy >= 50;
+  const tooFast = distance >= MAX_REASONABLE_JUMP_METERS && impliedSpeed > MAX_REASONABLE_SPEED_MPS;
+  if (tooFast || (badAccuracy && distance >= MAX_REASONABLE_JUMP_METERS)) {
+    return {
+      accepted: false,
+      reason: tooFast ? "jump-speed" : "low-accuracy-jump",
+      distance,
+      impliedSpeed
+    };
+  }
+  return { accepted: true, distance, impliedSpeed };
+}
+
+function liveStateFromPoint(point, receivedAt) {
+  return {
+    runnerId: point.runnerId,
+    eventId: point.eventId,
+    latestLat: point.displayLat,
+    latestLng: point.displayLng,
+    rawLat: point.lat,
+    rawLng: point.lng,
+    accuracy: point.accuracy,
+    speed: point.speed,
+    heading: point.heading,
+    lastSeenAt: receivedAt,
+    lastAcceptedAt: receivedAt,
+    isOnline: true,
+    rejectedCount: 0,
+    lastRejectedReason: ""
+  };
+}
+
+function appendLocationPoint(s, point) {
+  const receivedAt = Date.now();
+  const previousLive = s.liveStates[point.runnerId];
+  const decision = classifyPoint(point, previousLive);
+  point.receivedAt = receivedAt;
+  point.rejected = !decision.accepted;
+  point.rejectReason = decision.reason || "";
+  point.jumpDistance = decision.distance ? Number(decision.distance.toFixed(1)) : 0;
+  point.impliedSpeed = decision.impliedSpeed ? Number(decision.impliedSpeed.toFixed(2)) : 0;
+  s.locationPoints.push(point);
+  if (decision.accepted || !previousLive) {
+    s.liveStates[point.runnerId] = liveStateFromPoint(point, receivedAt);
+  } else {
+    s.liveStates[point.runnerId] = {
+      ...previousLive,
+      lastSeenAt: receivedAt,
+      isOnline: true,
+      rejectedCount: Number(previousLive.rejectedCount || 0) + 1,
+      lastRejectedReason: point.rejectReason
+    };
+  }
 }
 
 function publicRunner(runner) {
@@ -535,13 +611,13 @@ async function handleApi(req, res, pathname) {
           s.runners[event.id] = s.runners[event.id] || [];
           s.runners[event.id].push(runner);
         });
-        broadcast(event.id, { type: "runner-created", runner });
+        broadcast(event.id, { type: "runner-created", runner: publicRunner(runner) });
       } else {
         ensureRunnerToken(runner);
         runner.name = body.name || runner.name || "未命名";
         runner.updatedAt = nowIso();
         writeStore(store);
-        broadcast(event.id, { type: "runner-updated", runner });
+        broadcast(event.id, { type: "runner-updated", runner: publicRunner(runner) });
       }
       return sendJson(res, 200, { event, runner });
     }
@@ -553,20 +629,7 @@ async function handleApi(req, res, pathname) {
       if (!isValidUploadToken(body.eventId, body.runnerId, body.uploadToken)) return sendJson(res, 403, { error: "Invalid upload token" });
       const point = normalizeLocation(body);
       updateStore(s => {
-        s.locationPoints.push(point);
-        s.liveStates[point.runnerId] = {
-          runnerId: point.runnerId,
-          eventId: point.eventId,
-          latestLat: point.displayLat,
-          latestLng: point.displayLng,
-          rawLat: point.lat,
-          rawLng: point.lng,
-          accuracy: point.accuracy,
-          speed: point.speed,
-          heading: point.heading,
-          lastSeenAt: point.timestamp,
-          isOnline: true
-        };
+        appendLocationPoint(s, point);
       });
       broadcast(point.eventId, { type: "location", point, liveStates: liveSnapshot(point.eventId) });
       return sendJson(res, 201, { point });
@@ -582,20 +645,7 @@ async function handleApi(req, res, pathname) {
       const points = rawPoints.map(normalizeLocation);
       updateStore(s => {
         for (const point of points) {
-          s.locationPoints.push(point);
-          s.liveStates[point.runnerId] = {
-            runnerId: point.runnerId,
-            eventId: point.eventId,
-            latestLat: point.displayLat,
-            latestLng: point.displayLng,
-            rawLat: point.lat,
-            rawLng: point.lng,
-            accuracy: point.accuracy,
-            speed: point.speed,
-            heading: point.heading,
-            lastSeenAt: point.timestamp,
-            isOnline: true
-          };
+          appendLocationPoint(s, point);
           broadcast(point.eventId, { type: "location", point, liveStates: liveSnapshot(point.eventId) });
         }
       });

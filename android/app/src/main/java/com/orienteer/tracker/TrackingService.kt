@@ -12,7 +12,9 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import java.io.OutputStreamWriter
@@ -25,12 +27,16 @@ class TrackingService : Service() {
     private lateinit var locationManager: LocationManager
     private lateinit var queue: QueuedLocationStore
     private val executor = Executors.newSingleThreadExecutor()
+    private val heartbeatHandler = Handler(Looper.getMainLooper())
     private var locationListener: LocationListener? = null
+    private var lastLocation: Location? = null
+    private var heartbeatRunnable: Runnable? = null
     private var serverUrl: String = ""
     private var eventId: String = ""
     private var runnerId: String = ""
     private var uploadToken: String = ""
     private var intervalMillis: Long = 2000L
+    private var uploadCount: Long = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -49,12 +55,15 @@ class TrackingService : Service() {
                 runnerId = intent.getStringExtra(EXTRA_RUNNER_ID).orEmpty()
                 uploadToken = intent.getStringExtra(EXTRA_UPLOAD_TOKEN).orEmpty()
                 intervalMillis = (intent.getLongExtra(EXTRA_INTERVAL_SECONDS, 2L).coerceAtLeast(1L)) * 1000L
-                startForeground(NOTIFICATION_ID, buildNotification("Tracking active"))
+                lastLocation = newestLastKnownLocation()
+                startForeground(NOTIFICATION_ID, buildNotification("已启动，等待定位上传"))
                 startLocationUpdates()
+                startHeartbeat()
                 flushQueued()
             }
             ACTION_STOP -> {
                 stopLocationUpdates()
+                stopHeartbeat()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -74,14 +83,8 @@ class TrackingService : Service() {
 
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
-                val payload = buildPayload(location)
-                executor.execute {
-                    if (postSingle(payload)) {
-                        flushQueued()
-                    } else {
-                        queue.append(payload)
-                    }
-                }
+                lastLocation = location
+                uploadLocation(location, location.time)
             }
 
             @Deprecated("Deprecated in Android SDK")
@@ -102,7 +105,7 @@ class TrackingService : Service() {
         }
         if (!requested) {
             val manager = getSystemService(NotificationManager::class.java)
-            manager.notify(NOTIFICATION_ID, buildNotification("No location provider. Enable GPS or network location."))
+            manager.notify(NOTIFICATION_ID, buildNotification("没有可用定位，请打开 GPS 或网络定位"))
         }
     }
 
@@ -111,12 +114,45 @@ class TrackingService : Service() {
         locationListener = null
     }
 
+    private fun startHeartbeat() {
+        stopHeartbeat()
+        heartbeatRunnable = object : Runnable {
+            override fun run() {
+                val location = lastLocation ?: newestLastKnownLocation()
+                if (location != null) {
+                    lastLocation = location
+                    uploadLocation(location, System.currentTimeMillis())
+                } else {
+                    notifyUpload("等待定位结果，尚未上传")
+                }
+                heartbeatHandler.postDelayed(this, intervalMillis)
+            }
+        }
+        heartbeatHandler.postDelayed(heartbeatRunnable!!, intervalMillis)
+    }
+
+    private fun stopHeartbeat() {
+        heartbeatRunnable?.let { heartbeatHandler.removeCallbacks(it) }
+        heartbeatRunnable = null
+    }
+
+    private fun newestLastKnownLocation(): Location? {
+        if (!hasLocationPermission()) return null
+        return listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            .mapNotNull { provider ->
+                runCatching {
+                    if (locationManager.isProviderEnabled(provider)) locationManager.getLastKnownLocation(provider) else null
+                }.getOrNull()
+            }
+            .maxByOrNull { it.time }
+    }
+
     private fun hasLocationPermission(): Boolean {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun buildPayload(location: Location): String {
+    private fun buildPayload(location: Location, timestamp: Long = location.time): String {
         return JSONObject()
             .put("eventId", eventId)
             .put("runnerId", runnerId)
@@ -127,7 +163,7 @@ class TrackingService : Service() {
             .put("accuracy", location.accuracy)
             .put("speed", if (location.hasSpeed()) location.speed else 0f)
             .put("heading", if (location.hasBearing()) location.bearing else 0f)
-            .put("timestamp", location.time)
+            .put("timestamp", timestamp)
             .toString()
     }
 
@@ -135,8 +171,23 @@ class TrackingService : Service() {
         return postJson("$serverUrl/api/location/report", payload)
     }
 
-    private fun flushQueued() {
-        val queued = queue.readAll()
+    private fun uploadLocation(location: Location, timestamp: Long) {
+        val payload = buildPayload(location, timestamp = timestamp)
+        executor.execute {
+            val ok = postSingle(payload)
+            if (ok) {
+                uploadCount += 1
+                notifyUpload("上传成功 #$uploadCount ${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.CHINA).format(java.util.Date())}")
+                flushQueued(limit = 10)
+            } else {
+                queue.append(payload)
+                notifyUpload("上传失败，已缓存")
+            }
+        }
+    }
+
+    private fun flushQueued(limit: Int = 10) {
+        val queued = queue.readLatest(limit)
         if (queued.isEmpty()) return
         val points = org.json.JSONArray()
         queued.forEach { points.put(JSONObject(it)) }
@@ -144,11 +195,7 @@ class TrackingService : Service() {
 
         if (postJson("$serverUrl/api/location/batch-report", batchPayload)) {
             queue.replaceRemaining(emptyList())
-            return
         }
-
-        val remaining = queued.filterNot { postSingle(it) }
-        queue.replaceRemaining(remaining)
     }
 
     private fun postJson(endpoint: String, payload: String): Boolean {
@@ -169,6 +216,11 @@ class TrackingService : Service() {
             connection.disconnect()
             code in 200..299
         }.getOrDefault(false)
+    }
+
+    private fun notifyUpload(text: String) {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, buildNotification(text))
     }
 
     private fun ensureNotificationChannel() {

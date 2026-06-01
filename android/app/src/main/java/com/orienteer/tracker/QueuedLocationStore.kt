@@ -18,6 +18,12 @@ class QueuedLocationStore(context: Context) {
     }
 
     @Synchronized
+    fun readLatest(limit: Int): List<String> {
+        if (!file.exists()) return emptyList()
+        return file.readLines().filter { it.isNotBlank() }.takeLast(limit)
+    }
+
+    @Synchronized
     fun replaceRemaining(remaining: List<String>) {
         if (remaining.isEmpty()) {
             file.delete()

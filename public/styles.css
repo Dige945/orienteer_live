@@ -20,6 +20,7 @@ body {
   color: var(--text);
   font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
   overflow: hidden;
+  touch-action: manipulation;
 }
 
 button,
@@ -181,6 +182,32 @@ body.admin-mode .admin-login {
 .playback-controls select,
 .playback-controls input[type="range"] {
   width: 100%;
+}
+
+.runner-checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 6px;
+}
+
+.runner-checks label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.runner-checks input {
+  width: auto;
+}
+
+.runner-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex: 0 0 auto;
 }
 
 .playback-row {
@@ -483,6 +510,13 @@ body.admin-mode .admin-login {
 
 .live-stage {
   min-height: 0;
+  touch-action: none;
+}
+
+.live-viewport {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
 }
 
 .live-map {
@@ -500,6 +534,33 @@ body.admin-mode .admin-login {
   inset: 0;
   width: 100%;
   height: 100%;
+}
+
+.live-zoom-controls {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 4px 14px rgba(24, 32, 26, 0.12);
+}
+
+.live-zoom-controls button {
+  min-width: 34px;
+  padding: 7px 9px;
+}
+
+#liveZoomLabel {
+  min-width: 48px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .empty-state {
@@ -559,5 +620,87 @@ pre {
 
   .live-layout {
     grid-template-columns: minmax(0, 1fr) 280px;
+  }
+}
+
+@media (max-width: 760px) {
+  body {
+    overflow: auto;
+  }
+
+  .shell,
+  body.visitor-mode .shell {
+    display: block;
+    min-height: 100vh;
+    height: auto;
+    overflow: visible;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    max-height: none;
+  }
+
+  .workspace {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+    padding: 8px;
+  }
+
+  .tabs {
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .tab {
+    white-space: nowrap;
+    padding: 8px 10px;
+  }
+
+  .live-layout {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .live-stage {
+    height: 64vh;
+    min-height: 360px;
+  }
+
+  .live-panel {
+    max-height: none;
+  }
+
+  .live-zoom-controls {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .runner-grid,
+  .playback-row {
+    grid-template-columns: 1fr;
+  }
+
+  .runner-grid input:nth-child(3),
+  .runner-grid button {
+    grid-column: auto;
+  }
+
+  .toolbar {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .toolbar .coord-input,
+  .toolbar button,
+  .toolbar .file-button,
+  .toolbar label {
+    flex: 1 1 140px;
   }
 }

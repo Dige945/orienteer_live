@@ -92,8 +92,16 @@
         <section class="tab-view active" id="liveView">
           <div class="live-layout">
             <div class="live-stage" id="liveStage">
-              <img id="liveMapImage" class="live-map" alt="定向图">
-              <svg id="liveOverlay" class="live-overlay"></svg>
+              <div id="liveViewport" class="live-viewport">
+                <img id="liveMapImage" class="live-map" alt="定向图">
+                <svg id="liveOverlay" class="live-overlay"></svg>
+              </div>
+              <div class="live-zoom-controls">
+                <button id="liveZoomOut" type="button">−</button>
+                <span id="liveZoomLabel">100%</span>
+                <button id="liveZoomIn" type="button">＋</button>
+                <button id="liveZoomReset" type="button">重置</button>
+              </div>
               <div id="liveEmpty" class="empty-state">实时大屏使用管理员上传的定向图。手机位置会显示在这里。</div>
             </div>
             <div class="live-panel">
@@ -106,6 +114,14 @@
               <h2>轨迹回放</h2>
               <div class="playback-controls">
                 <select id="playbackRunner"></select>
+                <select id="playbackSpeed">
+                  <option value="0.5">0.5x</option>
+                  <option value="1" selected>1x</option>
+                  <option value="2">2x</option>
+                  <option value="4">4x</option>
+                  <option value="8">8x</option>
+                </select>
+                <div id="playbackRunnerChecks" class="runner-checks"></div>
                 <input id="playbackRange" type="range" min="0" max="0" value="0">
                 <div class="playback-row">
                   <button id="playPause" type="button">播放</button>
