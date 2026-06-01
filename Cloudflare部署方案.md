@@ -314,7 +314,7 @@ POST /api/events/:eventId/map-image
 
 ## 前端部署方案
 
-前端放到 Cloudflare Pages。
+前端第一版直接随 Worker Static Assets 一起部署，不单独使用 Cloudflare Pages。
 
 建议目录：
 
@@ -341,6 +341,8 @@ new WebSocket("wss://你的域名/ws/events/...")
 ```
 
 这样手机扫码也更简单。
+
+注意：Cloudflare Pages 的 `_redirects` 不能代理到外部域名，所以不推荐用 `pages.dev` 再代理到 `workers.dev`。当前最简单稳定的方案是一个 Worker 同时托管静态网页和 API。
 
 ## 手机端影响
 
@@ -490,15 +492,9 @@ wrangler login
 npm run cf:worker:deploy
 ```
 
-部署 Pages：
+当前配置已使用 Worker Static Assets，部署 Worker 时会同时上传 `public/` 网页文件，所以不需要单独部署 Pages。
 
-```bat
-npm run cf:pages:deploy
-```
-
-也可以后续接 GitHub 自动部署。
-
-当前进度：已新增 `public/_headers` 和 `public/_redirects`，还需要实际 Cloudflare 账号环境验证。
+当前进度：已配置 `cloudflare/worker/wrangler.toml` 的 `[assets]`，还需要实际 Cloudflare 账号环境验证。
 
 ### 第 9 步：部署后验证
 

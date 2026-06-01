@@ -1,6 +1,14 @@
 # Cloudflare Worker 迁移状态
 
-这个目录是 Cloudflare 托管版本的后端骨架。
+这个目录是 Cloudflare 托管版本的后端。当前采用一个 Worker 同时托管网页静态文件和 API：
+
+```text
+https://xxx.workers.dev/
+https://xxx.workers.dev/api/...
+https://xxx.workers.dev/ws/...
+```
+
+这样不需要额外创建 Cloudflare Pages 项目，也不需要配置 `_redirects` 代理。
 
 ## 当前已实现
 
@@ -57,21 +65,26 @@ cd cloudflare\worker
 wrangler dev
 ```
 
-默认管理员密码在 `wrangler.toml`：
+默认管理员密码是代码里的 fallback：
 
-```toml
-[vars]
-ADMIN_PASSWORD = "admin123"
+```text
+admin123
+```
+
+正式使用前建议改成 Worker Secret，不要把密码写进 GitHub：
+
+```bat
+cd cloudflare\worker
+wrangler secret put ADMIN_PASSWORD
 ```
 
 ## 部署
 
 ```bat
-cd cloudflare\worker
-wrangler deploy
+npm run cf:worker:deploy
 ```
 
-部署后需要把 Pages 的 `/api/*` 和 `/ws/*` 路由指到这个 Worker，或者直接把 Worker 绑定到同一个域名。
+部署成功后，命令行会输出一个 `workers.dev` 地址。这个地址就是网页地址，也是手机扫码里面的服务器地址。
 
 ## 部署后验证
 
