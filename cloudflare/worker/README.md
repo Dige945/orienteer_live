@@ -27,28 +27,24 @@
 - `PUT /api/events/:eventId/map-transform`
 - `WS /ws/events/:eventId/live`
 
-## 当前临时方案
+## 当前底图方案
 
-底图上传会优先写入 R2，并返回：
+默认不使用 R2。底图上传后会以 `data:` URL 存到 Durable Object Storage，适合当前“单赛事、每次一张底图”的最低成本方案。
 
-```text
-/api/maps/maps/{eventId}/{timestamp}.png
-```
+建议上传前把定向底图压缩到 1-2MB 以内，图片太大时 Worker 请求体和 Durable Object 存储会更容易碰到限制。
 
-如果本地调试时没有绑定 R2，则自动退回 `data:` URL 临时方案。
-
-部署前需要创建 R2 bucket：
-
-```bat
-wrangler r2 bucket create orienteer-maps
-```
-
-`wrangler.toml` 已配置：
+后续如果要长期保存很多赛事底图，再改回 R2。R2 版本需要在 `wrangler.toml` 加回：
 
 ```toml
 [[r2_buckets]]
 binding = "MAPS"
 bucket_name = "orienteer-maps"
+```
+
+并创建 bucket：
+
+```bat
+wrangler r2 bucket create orienteer-maps
 ```
 
 ## 本地调试

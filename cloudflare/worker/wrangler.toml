@@ -12,7 +12,3 @@ class_name = "EventRoom"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["EventRoom"]
-
-[[r2_buckets]]
-binding = "MAPS"
-bucket_name = "orienteer-maps"

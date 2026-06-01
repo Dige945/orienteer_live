@@ -68,20 +68,17 @@ Cloudflare Durable Objects
   管理每个赛事的实时状态
   处理 WebSocket 连接和广播
 
-Cloudflare R2
-  存储定向底图图片
-
 Cloudflare D1 或 Durable Object Storage
-  存储赛事、参赛者、轨迹、校准参数
+  存储赛事、参赛者、轨迹、校准参数、当前底图
 ```
 
 建议第一版优先使用：
 
 ```text
-Pages + Worker + Durable Objects + R2
+Pages + Worker + Durable Objects
 ```
 
-D1 可以后续再引入。第一版可以把赛事状态和轨迹先放 Durable Object Storage，减少数据库迁移复杂度。
+D1 和 R2 可以后续再引入。第一版可以把赛事状态、轨迹和当前这一张底图先放 Durable Object Storage，减少数据库和对象存储迁移复杂度。
 
 ## 数据划分
 
@@ -164,7 +161,9 @@ D1 可以后续再引入。第一版可以把赛事状态和轨迹先放 Durable
 }
 ```
 
-底图图片文件放 R2。
+第一版底图用 `data:` URL 存到 Durable Object Storage。因为当前是单赛事模式，并且每次只保留一张底图，这个方案成本最低，也不需要开通 R2。
+
+建议底图上传前压缩到 1-2MB 以内。
 
 ### 定位点 LocationPoint
 
@@ -291,11 +290,10 @@ EventRoom 广播 WebSocket
 public/uploads/maps/*.png
 ```
 
-Cloudflare 改为 R2：
+Cloudflare 第一版改为 Durable Object Storage：
 
 ```text
-R2 bucket: orienteer-maps
-key: maps/{eventId}/{timestamp}.png
+mapImage.imageUrl = data:image/png;base64,...
 ```
 
 上传接口：
@@ -304,14 +302,15 @@ key: maps/{eventId}/{timestamp}.png
 POST /api/events/:eventId/map-image
 ```
 
-请求仍然可以先用 base64，方便前端少改。
+请求仍然用 base64，方便前端少改。
 
 后续优化：
 
+- 如果要保存多场赛事底图，改成 R2。
 - 改成 multipart upload。
 - 或者 Worker 生成 R2 presigned upload URL。
 
-第一版用 base64 可以接受，但要注意 Worker 请求体大小限制。底图过大时要压缩或走直传。
+第一版用 base64 可以接受，但要注意 Worker 请求体大小限制。底图过大时要压缩，或者后续改 R2 直传。
 
 ## 前端部署方案
 
@@ -462,7 +461,7 @@ WS  /ws/events/:eventId/live
 
 当前进度：已完成基础 WebSocket 广播。
 
-### 第 7 步：实现 R2 底图上传
+### 第 7 步：实现底图上传
 
 实现：
 
@@ -472,9 +471,9 @@ GET  /api/events/:eventId/map-image
 PUT  /api/events/:eventId/map-transform
 ```
 
-图片存 R2，`imageUrl` 返回可访问地址。
+默认不使用 R2，图片以 `data:` URL 存入 Durable Object Storage。
 
-当前进度：已完成 R2 优先写入；本地无 R2 绑定时回退 `data:` URL。
+当前进度：已完成 `data:` URL 存储方案；代码仍保留 R2 兼容逻辑，后续加回 R2 绑定即可启用。
 
 ### 第 8 步：部署 Pages + Worker
 
@@ -483,12 +482,6 @@ PUT  /api/events/:eventId/map-transform
 ```bat
 npm install -g wrangler
 wrangler login
-```
-
-创建 R2 bucket：
-
-```bat
-wrangler r2 bucket create orienteer-maps
 ```
 
 部署 Worker：
@@ -553,7 +546,7 @@ npm run cf:smoke:write
 
 - Workers 请求数
 - Durable Objects 请求和存储
-- R2 存储和读取
+- Durable Objects 存储
 - Pages 基本静态托管
 
 如果参赛者数量几十人，每 2 秒上传一次：
@@ -574,7 +567,7 @@ npm run cf:smoke:write
 2. 管理员登录和单赛事管理。
 3. 手机加入和定位上传。
 4. WebSocket 实时大屏。
-5. R2 底图上传。
+5. 底图上传。
 
 完成后再考虑：
 
