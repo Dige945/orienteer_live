@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Orienteer Tracker</string>
+    <string name="tracking_channel">定位服务</string>
+    <string name="tracking_running">定向越野定位运行中</string>
+    <string name="tracking_text">息屏后仍会持续上传位置</string>
+</resources>

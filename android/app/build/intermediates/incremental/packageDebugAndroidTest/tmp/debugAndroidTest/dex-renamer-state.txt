@@ -1,0 +1,4 @@
+#Fri May 29 16:53:30 CST 2026
+base.0=D\:\\Code_House\\orienteer\\android\\app\\build\\intermediates\\dex\\debugAndroidTest\\mergeProjectDexDebugAndroidTest\\0\\classes.dex
+path.0=0/classes.dex
+renamed.0=classes.dex

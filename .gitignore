@@ -1,0 +1,6 @@
+data/store.json
+public/uploads/maps/*
+!public/uploads/maps/.gitkeep
+node_modules/
+.DS_Store
+*.log

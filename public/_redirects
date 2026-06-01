@@ -1,0 +1,6 @@
+# 部署到 Cloudflare Pages 时，如果 API Worker 使用同一个自定义域名，
+# 这里通常不需要配置。
+#
+# 如果 Pages 和 Worker 分开部署，可以把下面的地址改成 Worker 地址后取消注释：
+# /api/*  https://orienteer-live-api.your-subdomain.workers.dev/api/:splat  200
+# /ws/*   https://orienteer-live-api.your-subdomain.workers.dev/ws/:splat   200

@@ -1,0 +1,6 @@
+[
+    {
+        "merged": "com.orienteer.tracker.app-debug-28:/xml_network_security_config.xml.flat",
+        "source": "com.orienteer.tracker.app-main-30:/xml/network_security_config.xml"
+    }
+]

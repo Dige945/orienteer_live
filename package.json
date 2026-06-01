@@ -1,0 +1,19 @@
+{
+  "name": "orienteer-live",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Orienteering live tracking MVP with image map alignment and mobile location upload APIs.",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check public/app.js && node --check cloudflare/worker/src/index.js && node --check cloudflare/worker/src/event-room.js && node --check scripts/cloudflare-smoke.js",
+    "smoke": "node scripts/smoke.js",
+    "cf:smoke": "node scripts/cloudflare-smoke.js",
+    "cf:smoke:write": "node scripts/cloudflare-smoke.js --write",
+    "cf:worker:dev": "cd cloudflare\\worker && wrangler dev",
+    "cf:worker:deploy": "cd cloudflare\\worker && wrangler deploy",
+    "cf:pages:deploy": "wrangler pages deploy public --project-name orienteer-live"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

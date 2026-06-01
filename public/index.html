@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>定向实时定位</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body class="visitor-mode">
+    <main class="shell">
+      <aside class="sidebar admin-only">
+        <section class="panel">
+          <div class="sidebar-top">
+            <h2>当前赛事</h2>
+            <span class="server-pill" id="serverStatus">连接中</span>
+          </div>
+          <form id="eventForm" class="stack">
+            <input name="name" placeholder="赛事名称" required>
+            <textarea name="description" placeholder="备注"></textarea>
+            <button type="submit">创建/替换当前赛事</button>
+          </form>
+          <div id="eventList" class="event-list"></div>
+        </section>
+
+        <section class="panel">
+          <h2>公共地图定位</h2>
+          <div class="stack">
+            <input id="placeKeyword" placeholder="搜索地点或场馆">
+            <button id="searchPlace" type="button">搜索地点</button>
+            <div id="placeResults" class="place-results"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>参赛者管理</h2>
+          <form id="runnerForm" class="runner-grid">
+            <input name="name" placeholder="姓名" required>
+            <button type="submit">添加参赛者</button>
+          </form>
+          <div id="runnerList" class="runner-list"></div>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <nav class="tabs">
+          <button class="tab admin-only" data-tab="align">底图对齐</button>
+          <button class="tab active" data-tab="live">实时大屏</button>
+          <button class="tab admin-only" data-tab="api">手机接入</button>
+          <button class="tab admin-login" id="adminLogin" type="button">管理员登录</button>
+          <button class="tab admin-only" id="adminLogout" type="button">退出管理</button>
+        </nav>
+
+        <section class="tab-view admin-only" id="alignView">
+          <div class="toolbar">
+            <label class="file-button">
+              上传定向图
+              <input id="mapFile" type="file" accept="image/png,image/jpeg,image/webp">
+            </label>
+            <input id="centerLng" class="coord-input" placeholder="经度">
+            <input id="centerLat" class="coord-input" placeholder="纬度">
+            <select id="mapProvider" class="coord-input">
+              <option value="osm">OSM</option>
+              <option value="amap">高德</option>
+            </select>
+            <button id="goCenter" type="button">移动中心</button>
+            <button id="addTestPoint" type="button">添加测试点</button>
+            <button id="captureMapPoints" type="button">地图取点</button>
+            <button id="captureImagePoints" type="button">底图取点</button>
+            <button id="applyTwoPointCalibration" type="button">保存并对齐</button>
+            <button id="clearControlPoints" type="button">清空控制点</button>
+            <label class="step-control">缩放 <button type="button" data-step-target="scaleInput" data-step-dir="-1">‹</button><input id="scaleInput" type="range" min="0.1" max="4" step="0.01" value="1"><button type="button" data-step-target="scaleInput" data-step-dir="1">›</button></label>
+            <label class="step-control">旋转 <button type="button" data-step-target="rotationInput" data-step-dir="-1">‹</button><input id="rotationInput" type="range" min="-180" max="180" step="1" value="0"><button type="button" data-step-target="rotationInput" data-step-dir="1">›</button></label>
+            <label class="step-control">透明度 <button type="button" data-step-target="opacityInput" data-step-dir="-1">‹</button><input id="opacityInput" type="range" min="0.1" max="1" step="0.01" value="0.65"><button type="button" data-step-target="opacityInput" data-step-dir="1">›</button></label>
+            <label><input id="showReferenceMap" type="checkbox" checked> 显示公共地图</label>
+            <button id="saveTransform" type="button">保存对齐</button>
+            <button id="resetTransform" type="button">重置</button>
+          </div>
+
+          <div class="map-stage" id="alignStage">
+            <div id="tileMap" class="tile-map"></div>
+            <div id="fallbackMap" class="fallback-map">
+              <span>公共地图只用于把定向图对齐到真实地理位置。</span>
+            </div>
+            <img id="overlayImage" class="overlay-image" alt="定向图">
+            <svg id="alignOverlay" class="align-overlay"></svg>
+          </div>
+          <p class="hint" id="mapReadout">拖动定向图，让道路和地物与公共地图重合；保存后手机 GPS 会映射到定向图上。</p>
+          <p class="hint" id="mapDebug">公共 OpenStreetMap 参考层。</p>
+          <p class="hint">地图数据 © OpenStreetMap contributors。公共地图只用于校准。</p>
+        </section>
+
+        <section class="tab-view active" id="liveView">
+          <div class="live-layout">
+            <div class="live-stage" id="liveStage">
+              <img id="liveMapImage" class="live-map" alt="定向图">
+              <svg id="liveOverlay" class="live-overlay"></svg>
+              <div id="liveEmpty" class="empty-state">实时大屏使用管理员上传的定向图。手机位置会显示在这里。</div>
+            </div>
+            <div class="live-panel">
+              <h2>实时状态</h2>
+              <div class="live-controls">
+                <label><input id="showTracks" type="checkbox" checked> 显示最近 20 秒拖痕</label>
+                <button id="refreshTracks" type="button">刷新轨迹</button>
+                <button id="simulateMove" class="admin-only" type="button">模拟移动</button>
+              </div>
+              <h2>轨迹回放</h2>
+              <div class="playback-controls">
+                <select id="playbackRunner"></select>
+                <input id="playbackRange" type="range" min="0" max="0" value="0">
+                <div class="playback-row">
+                  <button id="playPause" type="button">播放</button>
+                  <button id="playReset" type="button">重置</button>
+                </div>
+                <small id="playbackTime">暂无轨迹</small>
+              </div>
+              <div id="liveList" class="live-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab-view admin-only" id="apiView">
+          <div class="api-card">
+            <h2>Android 手机接入</h2>
+            <p>手机扫码加入当前赛事，只填写姓名；开始后会通过前台服务在息屏时继续上传位置。</p>
+            <div class="join-link-box">
+              <strong>加入二维码</strong>
+              <input id="serverOrigin" placeholder="手机连接地址，例如 https://xxxx.trycloudflare.com">
+              <button id="useCurrentOrigin" type="button">使用当前网页地址</button>
+              <a id="diagnosticsLink" target="_blank" rel="noreferrer">打开诊断接口</a>
+              <input id="joinLink" readonly>
+              <button id="copyJoinLink" type="button">复制加入链接</button>
+              <img id="joinQr" class="join-qr" alt="加入二维码">
+              <small>手机 App 扫这个二维码后，会自动填入服务器地址和赛事码，并显示赛事名称。</small>
+            </div>
+            <pre id="apiExample"></pre>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

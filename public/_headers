@@ -1,0 +1,7 @@
+/api/*
+  Access-Control-Allow-Origin: *
+  Access-Control-Allow-Headers: content-type,x-admin-password
+  Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS
+
+/ws/*
+  Access-Control-Allow-Origin: *
